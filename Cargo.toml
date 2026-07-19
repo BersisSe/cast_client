@@ -1,0 +1,25 @@
+[package]
+name = "cast_client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = {version = "0.35", features = ["glow", "persistence"], default-features = false}
+tokio = {version = "1.0", features = ["macros", "rt", "net"]}
+tokio-util = "0.7"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
+futures-util = "0.3.33" 
+eventsource-stream = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+egui_commonmark = { version = "0.24", default-features = false, features = ["pulldown_cmark", "better_syntax_highlighting"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+mimalloc = { version = "0.1.50" }
+dirs = "6.0"
+
+[profile.release]
+lto = true
+panic = "abort"
+strip = true
+opt-level = "z"
+codegen-units = 1
