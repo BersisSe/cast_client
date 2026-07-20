@@ -68,7 +68,7 @@ impl From<&Message> for serde_json::Value {
 #[derive(Debug,Clone, Serialize, Deserialize)]
 pub struct Conversation{
     pub title: String,
-    pub messages: Vec<Message>
+    pub messages: Vec<Message>,
 }
 
 #[derive(Debug,Clone, Serialize, Deserialize)]

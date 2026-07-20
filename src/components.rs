@@ -44,6 +44,10 @@ fn render_label(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCache) {
 pub fn edit_line(ui: &mut egui::Ui, input: &mut String, sending_disabled: bool, on_cancel: Option<&mut dyn FnMut()>) -> Option<String> {
     let mut submitted: Option<String> = None;
 
+    if !sending_disabled && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter)) {
+        input.push('\n');
+    }
+
     egui::Frame::new()
         .fill(theme::BG_CONTENT)
         .inner_margin(6)
@@ -53,19 +57,22 @@ pub fn edit_line(ui: &mut egui::Ui, input: &mut String, sending_disabled: bool, 
             ui.horizontal(|ui| {
                 let button_width = 64.0;
                 let field_width = ui.available_width() - button_width - 8.0;
+
                 let response = ui.add_enabled(
                     !sending_disabled,
-                    egui::TextEdit::singleline(input)
+                    egui::TextEdit::multiline(input)
                         .hint_text(if sending_disabled {
                             "Waiting for response..."
                         } else {
                             "Message..."
                         })
-                        .desired_width(field_width.max(0.0)),
+                        .desired_width(field_width.max(0.0))
+                        .desired_rows(2),
                 );
 
-                let enter_pressed =
-                    response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter_to_submit = !sending_disabled
+                    && response.has_focus()
+                    && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
 
                 if sending_disabled {
                     if let Some(cancel_fn) = on_cancel {
@@ -78,7 +85,7 @@ pub fn edit_line(ui: &mut egui::Ui, input: &mut String, sending_disabled: bool, 
                         .add_enabled(!sending_disabled, egui::Button::new("Send"))
                         .clicked();
 
-                    if (enter_pressed || send_clicked) && !input.trim().is_empty() {
+                    if (enter_to_submit || send_clicked) && !input.trim().is_empty() {
                         submitted = Some(std::mem::take(input));
                         response.request_focus();
                     }
@@ -89,7 +96,7 @@ pub fn edit_line(ui: &mut egui::Ui, input: &mut String, sending_disabled: bool, 
     submitted
 }
 
-pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> bool {
+pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool) {
     let desired_size = egui::vec2(ui.available_width(), 34.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
@@ -123,5 +130,36 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> bool {
         text_color,
     );
 
-    response.clicked()
+    let btn_id = response.id.with("del");
+    let mut deleted = false;
+    if response.hovered() || active {
+        let btn_size = 20.0;
+        let btn_rect = egui::Rect::from_min_size(
+            rect.right_top() + egui::vec2(-btn_size - 4.0, (rect.height() - btn_size) / 2.0),
+            egui::vec2(btn_size, btn_size),
+        );
+        let btn_response = ui.interact(btn_rect, btn_id, egui::Sense::click());
+        if btn_response.clicked() {
+            deleted = true;
+        }
+        let btn_bg = if btn_response.hovered() {
+            egui::Color32::from_rgb(200, 60, 60)
+        } else {
+            egui::Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(btn_rect, 4.0, btn_bg);
+        ui.painter().text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "×",
+            egui::FontId::proportional(14.0),
+            if btn_response.hovered() {
+                egui::Color32::WHITE
+            } else {
+                theme::TEXT_SECONDARY
+            },
+        );
+    }
+
+    (response.clicked() && !deleted, deleted)
 }

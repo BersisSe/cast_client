@@ -52,7 +52,9 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([960.0, 640.0])
             .with_min_inner_size([760.0, 520.0])
             .with_icon(icon_data)
+            .with_app_id("cast_client")
             .with_title("Cast Client"),
+
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
@@ -69,6 +71,7 @@ struct AppSettings {
     base_url: String,
     api_key: String,
     model: String,
+    system_prompt: Option<String>,
 }
 
 struct CastClient {
@@ -98,6 +101,7 @@ impl CastClient {
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai/".to_string(),
             api_key: "".to_string(),
             model: "gemini-3.5-flash".to_string(),
+            system_prompt: None,
         };
 
         if let Some(store) = cc.storage {
@@ -157,6 +161,12 @@ impl CastClient {
                 ui.text_edit_singleline(&mut self.settings.model)
                     .on_hover_text("e.g., gemini-3.5-flash, gpt-4o, or qwen2.5-coder:7b");
                 ui.end_row();
+                ui.label("System Prompt:");
+                ui.add(
+                    egui::TextEdit::multiline(self.settings.system_prompt.get_or_insert_with(String::new))
+                        .hint_text("Using Default"),
+                );
+                ui.end_row();
             });
 
         ui.add_space(20.0);
@@ -193,16 +203,43 @@ impl CastClient {
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let mut delete_idx: Option<usize> = None;
+                    let mut click_idx: Option<usize> = None;
+
                     for (index, convo) in self.convos.iter().enumerate() {
                         let title = &convo.title;
                         let active = matches!(self.active, Selected::Index(i) if i == index);
-                        if sidebar_row(ui, title, active) {
-                            if matches!(self.active, Selected::Index(current) if current != index) {
-                                self.md_cache = egui_commonmark::CommonMarkCache::default();
-                            }
-                            self.active = Selected::Index(index);
-                            self.show_settings = false;
+                        let (clicked, deleted) = sidebar_row(ui, title, active);
+                        if clicked {
+                            click_idx = Some(index);
                         }
+                        if deleted {
+                            delete_idx = Some(index);
+                        }
+                    }
+
+                    if let Some(idx) = click_idx {
+                        if matches!(self.active, Selected::Index(current) if current != idx) {
+                            self.md_cache = egui_commonmark::CommonMarkCache::default();
+                        }
+                        self.active = Selected::Index(idx);
+                        self.show_settings = false;
+                    }
+
+                    if let Some(idx) = delete_idx {
+                        if self.generating_convo == Some(idx) {
+                            if let Some(cancel) = self.active_cancel.take() {
+                                cancel.cancel();
+                            }
+                            self.generating_convo = None;
+                        }
+                        self.convos.remove(idx);
+                        match self.active {
+                            Selected::Index(i) if i == idx => self.active = Selected::New,
+                            Selected::Index(i) if i > idx => self.active = Selected::Index(i - 1),
+                            _ => {}
+                        }
+                        storage::save_conversations(&self.convos);
                     }
                 });
         });
@@ -216,7 +253,9 @@ impl CastClient {
                     ui.with_layout(
                         egui::Layout::centered_and_justified(egui::Direction::TopDown),
                         |ui| {
-                            ui.label(RichText::new("Select a conversation or start a new one").heading());
+                            ui.label(
+                                RichText::new("Select a conversation or start a new one").heading(),
+                            );
                         },
                     );
                 }
@@ -291,6 +330,7 @@ impl CastClient {
                 .model(self.settings.model.clone())
                 .messages(messages)
                 .streaming(true)
+                .system_prompt(self.settings.system_prompt.clone())
                 .build();
 
             let client = self.client.clone();
@@ -305,7 +345,6 @@ impl CastClient {
             });
             storage::save_conversations(&self.convos)
         }
-        
     }
 }
 
