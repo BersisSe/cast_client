@@ -13,6 +13,9 @@
 - Single background thread for networking, not a full async worker pool
 - GPU-accelerated UI via `egui`/`eframe`, no browser engine involved
 
+## Seeing the App in action
+<img src="./src/icon/app.gif" alt="Cast Client App Photo" />
+
 ## Memory footprint
 
 | | Idle RAM |
