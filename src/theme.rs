@@ -77,6 +77,55 @@ pub fn custom_styling(ctx: &egui::Context) {
         egui::FontData::from_static(include_bytes!("./fonts/JetBrainsMono-Regular.ttf")).into(),
     );
     fonts.families.entry(EguiMonospace).or_default().insert(0, "JetBrains-Mono".to_owned());
+
+    add_system_fallback_fonts(&mut fonts);
     ctx.set_fonts(fonts);
     ctx.set_style_of(egui::Theme::Dark, style);
+}
+
+fn add_system_fallback_fonts(fonts: &mut egui::FontDefinitions) {
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = [
+            r"C:\Windows\Fonts\seguisym.ttf",
+            r"C:\Windows\Fonts\seguiemj.ttf",
+        ];
+        for path in &candidates {
+            if let Ok(data) = std::fs::read(path) {
+                let name = "Fallback-SegoeSymbol".to_owned();
+                fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
+                fonts.families.entry(Proportional).or_default().push(name.clone());
+                fonts.families.entry(EguiMonospace).or_default().push(name);
+                break;
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(data) = std::fs::read("/System/Library/Fonts/Apple Symbols.ttf") {
+            let name = "Fallback-AppleSymbols".to_owned();
+            fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
+            fonts.families.entry(Proportional).or_default().push(name.clone());
+            fonts.families.entry(EguiMonospace).or_default().push(name);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let candidates = [
+            "/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSansSymbols2-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ];
+        for path in &candidates {
+            if let Ok(data) = std::fs::read(path) {
+                let name = "Fallback-Linux".to_owned();
+                fonts.font_data.insert(name.clone(), egui::FontData::from_owned(data).into());
+                fonts.families.entry(Proportional).or_default().push(name.clone());
+                fonts.families.entry(EguiMonospace).or_default().push(name);
+                break;
+            }
+        }
+    }
 }

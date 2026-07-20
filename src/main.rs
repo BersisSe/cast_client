@@ -6,7 +6,7 @@ use eframe::egui::{self, Frame, Panel, RichText, ScrollArea};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{edit_line, message_bubble, sidebar_row};
-use crate::multiagent::types::CompletionRequest;
+use crate::multiagent::types::build_chat_body;
 use crate::multiagent::{AIClient, AIConfig, CompletionEvent};
 use crate::theme::custom_styling;
 use crate::types::Message;
@@ -325,13 +325,7 @@ impl CastClient {
                 self.convos[idx].messages.drain(0..msg_len - MAX_MESSAGES);
             }
 
-            let messages = self.convos[idx].messages.clone();
-            let request = CompletionRequest::new()
-                .model(self.settings.model.clone())
-                .messages(messages)
-                .streaming(true)
-                .system_prompt(self.settings.system_prompt.clone())
-                .build();
+            let body = build_chat_body(&self.settings.model, &self.convos[idx].messages, &self.settings.system_prompt);
 
             let client = self.client.clone();
             let ctx = ui.ctx().clone();
@@ -341,7 +335,7 @@ impl CastClient {
             self.generating_convo = Some(idx);
 
             tokio::spawn(async move {
-                client.completion(request, tx, cancel, ctx).await;
+                client.completion(body, true, tx, cancel, ctx).await;
             });
             storage::save_conversations(&self.convos)
         }
@@ -373,6 +367,7 @@ impl eframe::App for CastClient {
                         self.generating_convo = None;
                         self.active_cancel = None;
                         storage::save_conversations(&self.convos);
+                        
                     }
                     CompletionEvent::Error(e) => {
                         self.convos[idx]

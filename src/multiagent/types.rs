@@ -1,77 +1,40 @@
-use serde_json::{Value, json};
+use serde::Serialize;
 
 use crate::types::Message;
+use crate::types::MessageSender;
 
-pub struct CompletionRequest {
-    model: String,
-    messages: Vec<Message>,
-    streaming: bool,
-    system_prompt: Option<String>,
+#[derive(Serialize)]
+struct ChatBody<'a> {
+    model: &'a str,
+    messages: Vec<MessageBody<'a>>,
+    stream: bool,
+    reasoning_effort: &'a str,
 }
 
-pub struct CompReqBuilder {
-    model: Option<String>,
-    messages: Vec<Message>,
-    streaming: bool,
-    system_prompt: Option<String>
-}
-impl CompReqBuilder {
-    pub fn model(mut self, model: String) -> Self {
-        self.model = Some(model);
-        self
-    }
-    pub fn messages(mut self, msgs: Vec<Message>) -> Self {
-        self.messages = msgs;
-        self
-    }
-    pub fn streaming(mut self, is: bool) -> Self {
-        self.streaming = is;
-        self
-    }
-     pub fn system_prompt(mut self, prompt: Option<String>) -> Self {
-        self.system_prompt = prompt;
-        self
-    }
-    pub fn build(self) -> CompletionRequest {
-        let model = self.model.unwrap_or("gemini-3.5-flash".into());
-        CompletionRequest {
-            model,
-            messages: self.messages,
-            streaming: self.streaming,
-            system_prompt: self.system_prompt,
-        }
-    }
+#[derive(Serialize)]
+struct MessageBody<'a> {
+    role: &'a str,
+    content: &'a str,
 }
 
-impl CompletionRequest {
-    pub fn new() -> CompReqBuilder {
-        CompReqBuilder {
-            model: None,
-            messages: vec![],
-            streaming: true,
-            system_prompt: None,
-        }
-    }
+pub fn build_chat_body(model: &str, messages: &[Message], system_prompt: &Option<String>) -> String {
+    let system_content = get_system_prompt(system_prompt);
 
-    pub fn to_json(&self) -> Value {
-        let system = json!({
-            "role": "system",
-            "content": get_system_prompt(&self.system_prompt)
-        });
-        let mut msgs: Vec<Value> = vec![system];
-        msgs.extend(self.messages.iter().map(|m| Into::<Value>::into(m)));
-        
-        json!({
-            "model": self.model,
-            "messages": msgs,
-            "stream": self.streaming,
-            "reasoning_effort": "low",
-        })
-    }
+    let mut msgs = Vec::with_capacity(messages.len() + 1);
+    msgs.push(MessageBody { role: "system", content: system_content });
+    msgs.extend(messages.iter().map(|m| MessageBody {
+        role: if m.sender == MessageSender::User { "user" } else { "assistant" },
+        content: &m.content,
+    }));
 
-    pub fn is_streaming(&self) -> bool {
-        self.streaming
-    }
+    let body = ChatBody {
+        model,
+        messages: msgs,
+        stream: true,
+        reasoning_effort: "low",
+    };
+
+    serde_json::to_string(&body).expect("serialization should not fail")
 }
 
 fn get_system_prompt<'a>(prompt: &'a Option<String>) -> &'a str {

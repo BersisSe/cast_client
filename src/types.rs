@@ -49,21 +49,7 @@ impl Message {
             ai_start: true,
         }
     }
-    pub fn display_text(&self) -> String {
-        format!("{}: {}", self.sender, self.content)
-    }
 }
-
-impl From<&Message> for serde_json::Value {
-    fn from(msg: &Message) -> Self {
-        let role = if msg.sender == MessageSender::User { "user" } else { "assistant" };
-        serde_json::json!({
-            "role": role,
-            "content": msg.content
-        })
-    }
-}
-
 
 #[derive(Debug,Clone, Serialize, Deserialize)]
 pub struct Conversation{

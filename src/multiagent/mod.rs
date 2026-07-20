@@ -5,8 +5,6 @@ use reqwest::Client;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use crate::multiagent::types::CompletionRequest;
-
 pub mod types;
 
 #[derive(Debug, Clone)]
@@ -45,7 +43,8 @@ impl AIClient {
 
     pub async fn completion(
         &self,
-        request: CompletionRequest,
+        body: String,
+        streaming: bool,
         tx: std::sync::mpsc::Sender<CompletionEvent>,
         cancel: CancellationToken,
         ctx: Context,
@@ -55,15 +54,17 @@ impl AIClient {
             self.config.base_url.trim_end_matches('/').to_string() + "/"
         );
 
-        let body = request.to_json();
-
         let send_result = tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = tx.send(CompletionEvent::Cancelled);
                 ctx.request_repaint();
                 return;
             }
-            result = self.inner.post(&url).bearer_auth(&self.config.api_key).json(&body).send() => result,
+            result = self.inner.post(&url)
+                .bearer_auth(&self.config.api_key)
+                .header("Content-Type", "application/json")
+                .body(body)
+                .send() => result,
         };
 
         let resp = match send_result {
@@ -83,7 +84,7 @@ impl AIClient {
             return;
         }
 
-        if !request.is_streaming() {
+        if !streaming {
             match resp.json::<serde_json::Value>().await {
                 Ok(value) => {
                     if let Some(text) = value["choices"][0]["message"]["content"].as_str() {
