@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = {version = "0.35", features = ["glow", "persistence"], default-features = false}
+eframe = {version = "0.35", features = ["glow", "persistence", "wayland", "x11"], default-features = false}
 tokio = {version = "1.0", features = ["macros", "rt", "net"]}
 tokio-util = "0.7"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream"] }
