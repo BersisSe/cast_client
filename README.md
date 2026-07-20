@@ -45,11 +45,6 @@ Well it all began when I was talking to Gemini and I saw my tab(only a single ta
 
 So its here you can send PR's and Issue's for features you want and I'll merge/handle them other than that I really appriciate a star ⭐ maybe if this repo grows native apps will take of someday.
 
-## Status
-
-Working daily driver. Planned: multiple saved provider profiles (switch
-model/key/URL per conversation), a small set of hand-rolled tool
-integrations.
 
 ## License
 
