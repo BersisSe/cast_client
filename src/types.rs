@@ -23,6 +23,7 @@ pub struct Message {
     pub sender: MessageSender,
     pub content: String,
     pub ai_start: bool,
+    pub streaming: bool,
 }
 
 impl Message {
@@ -30,7 +31,7 @@ impl Message {
         Self {
             sender,
             content: content.to_string(),
-            
+            streaming: false,
             ai_start: false,
         }
     }
@@ -38,7 +39,7 @@ impl Message {
         Self {
             sender: MessageSender::AI,
             content: content.to_string(),
-            
+            streaming: false,
             ai_start: false,
         }
     }
@@ -47,6 +48,7 @@ impl Message {
             sender: MessageSender::AI,
             content: String::with_capacity(128),
             ai_start: true,
+            streaming: true,
         }
     }
 }

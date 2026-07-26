@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 pub const BG_SIDEBAR: Color32 = Color32::from_rgb(0x14, 0x17, 0x1C);
 pub const BG_CONTENT: Color32 = Color32::from_rgb(0x1A, 0x1E, 0x24);
 pub const BG_BUBBLE_AI: Color32 = Color32::from_rgb(0x20, 0x24, 0x2B);
+pub const BG_BUBBLE_ERR: Color32 = Color32::from_rgb(179, 7, 7);
 pub const BG_BUBBLE_USER: Color32 = Color32::from_rgb(0x23, 0x2A, 0x35);
 pub const BORDER_HAIRLINE: Color32 = Color32::from_rgb(0x2E, 0x34, 0x40);
 pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(0xDC, 0xE1, 0xE8);

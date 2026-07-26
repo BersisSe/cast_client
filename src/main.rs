@@ -4,6 +4,10 @@ use eframe::egui::Color32;
 use eframe::egui::{self, Frame, Panel, RichText, ScrollArea};
 
 use serde::{Deserialize, Serialize};
+use tray_icon::menu::{Menu, MenuItem, MenuEvent};
+use tray_icon::{TrayIconBuilder, TrayIconEvent};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::components::{edit_line, message_bubble, sidebar_row};
 use crate::multiagent::types::build_chat_body;
@@ -47,6 +51,7 @@ fn main() -> eframe::Result<()> {
         width,
         height,
     };
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([960.0, 640.0])
@@ -93,9 +98,53 @@ struct CastClient {
 
 impl CastClient {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let ctx = cc.egui_ctx.clone();
+        let quit_item = MenuItem::new("Quit", true, None);
+        let quit_id = quit_item.id().clone();
+        let menu = Menu::new();
+        let minimized = Arc::new(AtomicBool::new(false));
+        let min_for_tray = minimized.clone();
+        menu.append_items(&[&quit_item]).unwrap();
+        std::thread::spawn(move || {
+            let menu_rx = MenuEvent::receiver();
+            loop {
+                if let Ok(event) = TrayIconEvent::receiver().recv() {
+                    if let TrayIconEvent::Click { .. } = event {
+                        let was_visible = min_for_tray.fetch_xor(true, Ordering::SeqCst);
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(was_visible));
+                    }
+                }
+                if let Ok(event) = menu_rx.try_recv() {
+                    if event.id == quit_id {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        });
+        let icon_bytes = include_bytes!("./icon/AppIcon64.png");
+        let image = image::load_from_memory(icon_bytes)
+            .expect("Failed to load tray icon")
+            .to_rgba8();
+        let (icon_w, icon_h) = image.dimensions();
+        let tray_icon = tray_icon::Icon::from_rgba(image.into_raw(), icon_w, icon_h)
+            .expect("Failed to create tray icon");
+
+        let _tray_icon = TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_icon(tray_icon)
+            .with_tooltip("Cast Client")
+            .build()
+            .expect("failed to build tray icon");
+
+       
+
+        
+
         cc.egui_ctx.options_mut(|options| {
             options.reduce_texture_memory = true;
+            options.warn_on_id_clash = false
         });
+
         custom_styling(&cc.egui_ctx);
         let mut initial_settings = AppSettings {
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai/".to_string(),
@@ -139,6 +188,7 @@ impl CastClient {
         };
         self.client.update_config(config);
     }
+
     pub fn render_settings(&mut self, ui: &mut egui::Ui) {
         ui.heading("API Configuration");
         ui.add_space(10.0);
@@ -163,8 +213,10 @@ impl CastClient {
                 ui.end_row();
                 ui.label("System Prompt:");
                 ui.add(
-                    egui::TextEdit::multiline(self.settings.system_prompt.get_or_insert_with(String::new))
-                        .hint_text("Using Default"),
+                    egui::TextEdit::multiline(
+                        self.settings.system_prompt.get_or_insert_with(String::new),
+                    )
+                    .hint_text("Using Default"),
                 );
                 ui.end_row();
             });
@@ -325,7 +377,11 @@ impl CastClient {
                 self.convos[idx].messages.drain(0..msg_len - MAX_MESSAGES);
             }
 
-            let body = build_chat_body(&self.settings.model, &self.convos[idx].messages, &self.settings.system_prompt);
+            let body = build_chat_body(
+                &self.settings.model,
+                &self.convos[idx].messages,
+                &self.settings.system_prompt,
+            );
 
             let client = self.client.clone();
             let ctx = ui.ctx().clone();
@@ -344,6 +400,11 @@ impl CastClient {
 
 impl eframe::App for CastClient {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         if let Selected::Index(idx) = self.active {
             if self.last_active_convo != Some(idx) {
                 self.md_cache = egui_commonmark::CommonMarkCache::default();
@@ -367,7 +428,7 @@ impl eframe::App for CastClient {
                         self.generating_convo = None;
                         self.active_cancel = None;
                         storage::save_conversations(&self.convos);
-                        
+                        self.convos[idx].messages.last_mut().unwrap().streaming = false;
                     }
                     CompletionEvent::Error(e) => {
                         self.convos[idx]
@@ -379,7 +440,7 @@ impl eframe::App for CastClient {
                 }
             }
         }
-
+       
         Panel::left("nav").resizable(true).show(ui, |ui| {
             self.render_sidebar(ui);
         });

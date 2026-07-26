@@ -36,7 +36,11 @@ fn render_label(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCache) {
     if msg.ai_start {
         ui.label(egui::RichText::new("Thinking..").color(theme::TEXT_SECONDARY));
         ui.spinner();
+    } else if msg.streaming {
+        // Plain text while tokens are still arriving — cheap, smooth, no markdown reparse
+        ui.label(egui::RichText::new(&msg.content).color(theme::TEXT_PRIMARY));
     } else {
+        // Final content — parse markdown once
         egui_commonmark::CommonMarkViewer::new().show(ui, cache, &msg.content);
     }
 }

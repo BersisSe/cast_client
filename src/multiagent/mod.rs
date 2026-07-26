@@ -2,7 +2,7 @@ use eframe::egui::Context;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use reqwest::Client;
-use std::time::Duration;
+use std::{error::Error, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 pub mod types;
@@ -70,7 +70,13 @@ impl AIClient {
         let resp = match send_result {
             Ok(r) => r,
             Err(e) => {
-                let _ = tx.send(CompletionEvent::Error(e.to_string()));
+                let mut msg = e.to_string();
+                let mut source = e.source();
+                while let Some(s) = source {
+                    msg.push_str(&format!("\nCaused by: {s}"));
+                    source = s.source();
+                }
+                let _ = tx.send(CompletionEvent::Error(msg));
                 ctx.request_repaint();
                 return;
             }
@@ -89,7 +95,7 @@ impl AIClient {
                 Ok(value) => {
                     if let Some(text) = value["choices"][0]["message"]["content"].as_str() {
                         let _ = tx.send(CompletionEvent::Chunk(text.to_string()));
-                        ctx.request_repaint();
+                        ctx.request_repaint_after(Duration::from_millis(33));
                     }
                     let _ = tx.send(CompletionEvent::Finished);
                     ctx.request_repaint();
@@ -126,7 +132,7 @@ impl AIClient {
                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&ev.data) {
                         if let Some(text) = value["choices"][0]["delta"]["content"].as_str() {
                             let _ = tx.send(CompletionEvent::Chunk(text.to_string()));
-                            ctx.request_repaint();
+                            ctx.request_repaint_after(Duration::from_millis(33));
                         }
                         if let Some(finish_reason) = value["choices"][0]["finish_reason"].as_str() {
                             if !finish_reason.is_empty() {
