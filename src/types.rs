@@ -1,62 +1,29 @@
-use std::fmt::Display;
-
+use genai::chat::ChatMessage;
 use serde::{Deserialize, Serialize};
 
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum MessageSender {
-    User,
-    AI,
-
-}
-impl Display for MessageSender {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MessageSender::User => write!(f, "User"),
-            MessageSender::AI => write!(f, "AI"),
-        }
-    }
+#[derive(Debug)]
+pub enum CompletionEvent {
+    Chunk(String),
+    Finished,
+    ToolCallStarted { tool_name: String },
+    ToolTurnCompleted {
+        tool_calls: Vec<genai::chat::ToolCall>,
+        tool_responses: Vec<genai::chat::ToolResponse>,
+    },
+    Error(String),
+    Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub sender: MessageSender,
-    pub content: String,
-    pub ai_start: bool,
-    pub streaming: bool,
+pub enum ActiveConvoData{
+    generating = Option<usize>
 }
 
-impl Message {
-    pub fn new(sender: MessageSender, content: &str) -> Self {
-        Self {
-            sender,
-            content: content.to_string(),
-            streaming: false,
-            ai_start: false,
-        }
-    }
-    pub fn new_ai(content: &str) -> Self {
-        Self {
-            sender: MessageSender::AI,
-            content: content.to_string(),
-            streaming: false,
-            ai_start: false,
-        }
-    }
-    pub fn new_ai_begin() -> Self {
-        Self {
-            sender: MessageSender::AI,
-            content: String::with_capacity(128),
-            ai_start: true,
-            streaming: true,
-        }
-    }
-}
 
 #[derive(Debug,Clone, Serialize, Deserialize)]
 pub struct Conversation{
     pub title: String,
-    pub messages: Vec<Message>,
+    pub messages: Vec<ChatMessage>,
 }
 
 #[derive(Debug,Clone, Serialize, Deserialize)]
