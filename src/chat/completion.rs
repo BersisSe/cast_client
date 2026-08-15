@@ -134,8 +134,6 @@ async fn run_agent_loop(
 ) {
     const MAX_TOOL_TURNS: usize = 8;
     for turn in 0..MAX_TOOL_TURNS {
-        let turn_number = turn + 1;
-
         if cancel.is_cancelled() {
             println!("[AGENT] Cancellation requested before API call");
 
@@ -164,8 +162,6 @@ async fn run_agent_loop(
         };
 
         let mut end_event = None;
-        let mut chunk_count = 0usize;
-        let mut tool_chunk_count = 0usize;
 
         loop {
             tokio::select! {
@@ -181,8 +177,7 @@ async fn run_agent_loop(
 
                     match event {
                         Ok(ChatStreamEvent::Chunk(chunk)) => {
-                            chunk_count += 1;
-
+    
                             if !chunk.content.is_empty() {
                                 let _ = tx.send(
                                     CompletionEvent::Chunk(chunk.content)
@@ -191,7 +186,7 @@ async fn run_agent_loop(
                         }
 
                         Ok(ChatStreamEvent::ToolCallChunk(tool_chunk)) => {
-                            tool_chunk_count += 1;
+                            
 
                         }
 
@@ -263,7 +258,7 @@ async fn run_agent_loop(
 
         let mut tool_responses = Vec::with_capacity(tool_calls.len());
 
-        for (i, call) in tool_calls.iter().enumerate() {
+        for (_i, call) in tool_calls.iter().enumerate() {
             if cancel.is_cancelled() {
                 println!("[AGENT] Cancelled before tool execution");
 
