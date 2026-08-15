@@ -154,7 +154,7 @@ pub async fn execute_tool(call: &ToolCall) -> Result<String, String> {
                 .await
                 .map_err(|e| format!("Failed to read body: {e}"))?;
 
-            // Limit response size to 8KB so it doesn't overflow context
+            // Limit response size to 8KB.
             if text.len() > 8000 {
                 Ok(format!("{}...\n\n[Content truncated at 8000 characters]", &text[..8000]))
             } else {

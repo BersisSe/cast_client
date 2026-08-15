@@ -3,11 +3,12 @@ use egui_commonmark::CommonMarkCache;
 use genai::chat::{ChatMessage, ChatRole};
 
 use crate::chat::ExecMode;
+use crate::types::Message;
 
 use super::theme;
 
-pub fn message_bubble(ui: &mut egui::Ui, msg: &ChatMessage, cache: &mut CommonMarkCache, tool_name: Option<&str>) {
-    let is_user = matches!(msg.role, ChatRole::User);
+pub fn message_bubble(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCache) {
+    let is_user = matches!(msg.message.role, ChatRole::User);
     let align = if is_user {
         egui::Layout::right_to_left(egui::Align::Min)
     } else {
@@ -30,14 +31,16 @@ pub fn message_bubble(ui: &mut egui::Ui, msg: &ChatMessage, cache: &mut CommonMa
             .corner_radius(theme::CORNER_RADIUS)
             .stroke(Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE))
             .show(ui, |ui| {
-                render_label(ui, msg, cache);
-                if tool_name.is_some(){
-                    ui.label(tool_name.unwrap());
-                }
+                render_label(ui, &msg.message, msg.tools_called, cache);
             });
     });
 }
-fn render_label(ui: &mut egui::Ui, msg: &ChatMessage, cache: &mut CommonMarkCache) {
+fn render_label(
+    ui: &mut egui::Ui,
+    msg: &ChatMessage,
+    tools_used: usize,
+    cache: &mut CommonMarkCache,
+) {
     if matches!(msg.role, ChatRole::Tool) {
         return;
     }
@@ -61,10 +64,23 @@ fn render_label(ui: &mut egui::Ui, msg: &ChatMessage, cache: &mut CommonMarkCach
 
     if matches!(msg.role, ChatRole::Assistant) {
         egui_commonmark::CommonMarkViewer::new().show(ui, cache, &text);
-        
+
+        if tools_used > 0 {
+            let label = format!(
+                "🔧 {} tool{} called",
+                tools_used,
+                if tools_used == 1 { "" } else { "s" }
+            );
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(label)
+                    .small()
+                    .color(theme::TEXT_SECONDARY),
+            );
+        }
+
         return;
     }
-    
 
     ui.label(
         egui::RichText::new(text)
@@ -102,7 +118,6 @@ pub fn edit_line(
         .stroke(Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                // --- Mode Selector Toolbar ---
                 ui.horizontal(|ui| {
                     ui.selectable_value(exec_mode, ExecMode::Chat, "💬 Chat");
                     ui.selectable_value(exec_mode, ExecMode::Agent, "🤖 Agent");
@@ -126,7 +141,6 @@ pub fn edit_line(
 
                 ui.add_space(4.0);
 
-                // --- Input Field & Send Button ---
                 ui.horizontal(|ui| {
                     let button_width = 64.0;
                     let field_width = ui.available_width() - button_width - 8.0;

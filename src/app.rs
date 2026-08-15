@@ -6,10 +6,12 @@ use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::chat::completion::poll_events;
 use crate::chat::{self, ExecMode};
-use crate::components::{edit_line, message_bubble, sidebar_row, thinking_bubble, tool_status_bubble};
+use crate::components::{
+    edit_line, message_bubble, sidebar_row, thinking_bubble, tool_status_bubble,
+};
 use crate::theme::custom_styling;
 use crate::tray::TrayHandles;
-use crate::types::{ActiveConvoData, CompletionEvent, Conversation, Selected};
+use crate::types::{CompletionEvent, Conversation, GenerationState, Selected};
 use genai::Client;
 
 use genai::adapter::AdapterKind;
@@ -34,9 +36,7 @@ pub struct CastClient {
 
     tx: Sender<CompletionEvent>,
     rx: Receiver<CompletionEvent>,
-    generating_convo: Option<usize>,
     active_cancel: Option<CancellationToken>,
-    active_tool: Option<String>,
 
     settings: AppSettings,
     show_settings: bool,
@@ -51,6 +51,7 @@ pub struct CastClient {
     attachments: Vec<egui::DroppedFile>,
 
     exec_mode: ExecMode,
+    generation: GenerationState,
 }
 
 impl CastClient {
@@ -87,7 +88,6 @@ impl CastClient {
         );
         default_headers.insert("X-Title", HeaderValue::from_static("Cast Client"));
 
-        // 2. Build the underlying reqwest client with your default headers
         let reqwest_client = reqwest::Client::builder()
             .default_headers(default_headers)
             .build()
@@ -106,7 +106,7 @@ impl CastClient {
             input: String::new(),
             tx,
             rx,
-            generating_convo: None,
+
             active_cancel: None,
             last_active_convo: None,
             settings: initial_settings,
@@ -117,7 +117,7 @@ impl CastClient {
             quit_requested,
             attachments: Vec::new(),
             _tray: tray_icon,
-            active_tool: None,
+            generation: GenerationState::default(),
             exec_mode: ExecMode::default(),
         }
     }
@@ -131,8 +131,6 @@ impl CastClient {
             .spacing([12.0, 12.0])
             .show(ui, |ui| {
                 ui.label("API Adapter");
-
-                // 2. Ardından ComboBox'ı ekliyoruz (from_label yerine from_id_source kullanarak)
                 egui::ComboBox::from_id_salt("api_adapter_combo")
                     .selected_text(&self.settings.adapter.to_string())
                     .show_ui(ui, |ui| {
@@ -250,11 +248,14 @@ impl CastClient {
                     }
 
                     if let Some(idx) = delete_idx {
-                        if self.generating_convo == Some(idx) {
-                            if let Some(cancel) = self.active_cancel.take() {
-                                cancel.cancel();
+                        if let GenerationState::Active { convo_idx, .. } = &self.generation {
+                            if *convo_idx == idx {
+                                if let Some(cancel) = self.active_cancel.take() {
+                                    cancel.cancel();
+                                }
+
+                                self.generation = GenerationState::Idle;
                             }
-                            self.generating_convo = None;
                         }
                         self.convos.remove(idx);
                         match self.active {
@@ -293,15 +294,20 @@ impl CastClient {
 
         ScrollArea::vertical().show(ui, |ui| {
             for msg in &convo.messages {
-                message_bubble(ui, msg, &mut self.md_cache, self.active_tool.as_deref());
+                message_bubble(ui, msg, &mut self.md_cache);
             }
 
-            // Generation UI is NOT part of Conversation.messages.
-            if self.generating_convo == Some(idx) {
-                if let Some(tool_name) = &self.active_tool {
-                    tool_status_bubble(ui, tool_name);
-                } else {
-                    thinking_bubble(ui);
+            if let GenerationState::Active { convo_idx, phase } = &self.generation {
+                if *convo_idx == idx {
+                    match phase {
+                        crate::types::GenerationPhase::Thinking => {
+                            thinking_bubble(ui);
+                        }
+
+                        crate::types::GenerationPhase::ExecutingTool { tool_name } => {
+                            tool_status_bubble(ui, tool_name);
+                        }
+                    }
                 }
             }
         });
@@ -344,7 +350,7 @@ impl CastClient {
         let text = edit_line(
             ui,
             &mut self.input,
-            self.generating_convo.is_some(),
+            !matches!(self.generation, GenerationState::Idle),
             Some(&mut || {
                 cancel_triggered = true;
             }),
@@ -356,7 +362,8 @@ impl CastClient {
             if let Some(cancel) = self.active_cancel.take() {
                 cancel.cancel();
             }
-            self.generating_convo = None;
+
+            self.generation = GenerationState::Idle;
         }
 
         if let Some(val) = text {
@@ -376,7 +383,11 @@ impl CastClient {
 
             if let Some((idx, cancel)) = chat::completion::send_message(Some(val), ctx) {
                 self.active_cancel = Some(cancel);
-                self.generating_convo = Some(idx);
+
+                self.generation = GenerationState::Active {
+                    convo_idx: idx,
+                    phase: crate::types::GenerationPhase::Thinking,
+                };
             }
         }
     }
@@ -401,13 +412,11 @@ impl eframe::App for CastClient {
                 self.last_active_convo = Some(idx);
             }
         }
-        // WHILE POLL
         poll_events(
             &self.rx,
             &mut self.convos,
-            &mut self.generating_convo,
+            &mut self.generation,
             &mut self.active_cancel,
-            &mut self.active_tool,
         );
 
         Panel::left("nav").resizable(true).show(ui, |ui| {

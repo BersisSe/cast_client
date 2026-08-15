@@ -1,8 +1,7 @@
 pub mod completion;
 
-// Planned as tools/MCP land:
-pub mod tools; // tool schema + local dispatch
-// pub mod mcp;   // MCP server connections, tool discovery
+pub mod tools; 
+// pub mod mcp;   //  Coming Soon :)
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
