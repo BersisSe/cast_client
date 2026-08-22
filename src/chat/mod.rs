@@ -1,17 +1,12 @@
 pub mod completion;
 
-pub mod tools; 
-// pub mod mcp;   //  Coming Soon :)
+pub mod mcp;
+pub mod mcp_client;
+pub mod tools;
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum ExecMode {
+    #[default]
     Chat,
     Agent,
-}
-
-impl Default for ExecMode {
-    fn default() -> Self {
-        Self::Chat
-    }
 }

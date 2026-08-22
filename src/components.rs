@@ -19,17 +19,25 @@ pub fn message_bubble(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCa
         let max_width = (ui.available_width() * 0.78).min(700.0);
         ui.set_max_width(max_width);
 
-        let fill = if is_user {
+        let fill = if msg.is_error {
+            theme::BG_BUBBLE_ERR
+        } else if is_user {
             theme::BG_BUBBLE_USER
         } else {
             theme::BG_BUBBLE_AI
+        };
+
+        let stroke = if msg.is_error {
+            egui::Stroke::new(theme::HAIRLINE_WIDTH, theme::TEXT_PRIMARY)
+        } else {
+            Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE)
         };
 
         egui::Frame::new()
             .fill(fill)
             .inner_margin(10)
             .corner_radius(theme::CORNER_RADIUS)
-            .stroke(Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE))
+            .stroke(stroke)
             .show(ui, |ui| {
                 render_label(ui, &msg.message, msg.tools_called, cache);
             });
@@ -45,19 +53,14 @@ fn render_label(
         return;
     }
 
-    if matches!(msg.role, ChatRole::Assistant)
-        && !msg.content.tool_calls().is_empty()
-    {
+    if matches!(msg.role, ChatRole::Assistant) && !msg.content.tool_calls().is_empty() {
         return;
     }
 
     let text = msg.content.texts().join("");
 
     if text.is_empty() && matches!(msg.role, ChatRole::Assistant) {
-        ui.label(
-            egui::RichText::new("Thinking..")
-                .color(theme::TEXT_SECONDARY),
-        );
+        ui.label(egui::RichText::new("Thinking...").color(theme::TEXT_SECONDARY));
         ui.spinner();
         return;
     }
@@ -82,10 +85,7 @@ fn render_label(
         return;
     }
 
-    ui.label(
-        egui::RichText::new(text)
-            .color(theme::TEXT_PRIMARY),
-    );
+    ui.label(egui::RichText::new(text).color(theme::TEXT_PRIMARY));
 }
 
 pub fn edit_line(
@@ -93,8 +93,7 @@ pub fn edit_line(
     input: &mut String,
     sending_disabled: bool,
     on_cancel: Option<&mut dyn FnMut()>,
-    dropped_files: &mut Vec<egui::DroppedFile>,
-    exec_mode: &mut ExecMode, 
+    exec_mode: &mut ExecMode,
 ) -> Option<String> {
     let mut submitted: Option<String> = None;
 
@@ -105,11 +104,6 @@ pub fn edit_line(
     {
         input.push('\n');
     }
-    ui.ctx().input(|i| {
-        if !i.raw.dropped_files.is_empty() {
-            dropped_files.extend(i.raw.dropped_files.clone());
-        }
-    });
 
     egui::Frame::new()
         .fill(theme::BG_CONTENT)
@@ -164,10 +158,10 @@ pub fn edit_line(
                             .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
 
                     if sending_disabled {
-                        if let Some(cancel_fn) = on_cancel {
-                            if ui.button("Cancel").clicked() {
-                                cancel_fn();
-                            }
+                        if let Some(cancel_fn) = on_cancel
+                            && ui.button("Cancel").clicked()
+                        {
+                            cancel_fn();
                         }
                     } else {
                         let send_clicked = ui
@@ -190,9 +184,7 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool)
     let desired_size = egui::vec2(ui.available_width(), 34.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
-    let text_color = if active {
-        theme::TEXT_PRIMARY
-    } else if response.hovered() {
+    let text_color = if active || response.hovered() {
         theme::TEXT_PRIMARY
     } else {
         theme::TEXT_SECONDARY
@@ -254,63 +246,54 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool)
     (response.clicked() && !deleted, deleted)
 }
 pub fn thinking_bubble(ui: &mut egui::Ui) {
-    ui.with_layout(
-        egui::Layout::left_to_right(egui::Align::Min),
-        |ui| {
-            let max_width = (ui.available_width() * 0.78).min(700.0);
-            ui.set_max_width(max_width);
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        let max_width = (ui.available_width() * 0.78).min(700.0);
+        ui.set_max_width(max_width);
 
-            egui::Frame::new()
-                .fill(crate::theme::BG_BUBBLE_AI)
-                .inner_margin(10)
-                .corner_radius(crate::theme::CORNER_RADIUS)
-                .stroke(egui::Stroke::new(
-                    crate::theme::HAIRLINE_WIDTH,
-                    crate::theme::BORDER_HAIRLINE,
-                ))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Thinking...")
-                                .color(crate::theme::TEXT_SECONDARY),
-                        );
-                        ui.spinner();
-                    });
+        egui::Frame::new()
+            .fill(crate::theme::BG_BUBBLE_AI)
+            .inner_margin(10)
+            .corner_radius(crate::theme::CORNER_RADIUS)
+            .stroke(egui::Stroke::new(
+                crate::theme::HAIRLINE_WIDTH,
+                crate::theme::BORDER_HAIRLINE,
+            ))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Thinking...").color(crate::theme::TEXT_SECONDARY),
+                    );
+                    ui.spinner();
                 });
-        },
-    );
+            });
+    });
 }
 
 pub fn tool_status_bubble(ui: &mut egui::Ui, tool_name: &str) {
-    ui.with_layout(
-        egui::Layout::left_to_right(egui::Align::Min),
-        |ui| {
-            let max_width = (ui.available_width() * 0.78).min(700.0);
-            ui.set_max_width(max_width);
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        let max_width = (ui.available_width() * 0.78).min(700.0);
+        ui.set_max_width(max_width);
 
-            egui::Frame::new()
-                .fill(crate::theme::BG_BUBBLE_AI)
-                .inner_margin(10)
-                .corner_radius(crate::theme::CORNER_RADIUS)
-                .stroke(egui::Stroke::new(
-                    crate::theme::HAIRLINE_WIDTH,
-                    crate::theme::BORDER_HAIRLINE,
-                ))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("🔧");
+        egui::Frame::new()
+            .fill(crate::theme::BG_BUBBLE_AI)
+            .inner_margin(10)
+            .corner_radius(crate::theme::CORNER_RADIUS)
+            .stroke(egui::Stroke::new(
+                crate::theme::HAIRLINE_WIDTH,
+                crate::theme::BORDER_HAIRLINE,
+            ))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("🔧");
 
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "Executing tool `{tool_name}`..."
-                            ))
+                    ui.label(
+                        egui::RichText::new(format!("Executing tool `{tool_name}`..."))
                             .italics()
                             .color(crate::theme::TEXT_SECONDARY),
-                        );
+                    );
 
-                        ui.spinner();
-                    });
+                    ui.spinner();
                 });
-        },
-    );
+            });
+    });
 }

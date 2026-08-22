@@ -1,55 +1,96 @@
 use genai::chat::{Tool, ToolCall};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 
-/// Returns the schema definitions for all tools available to Agent Mode.
-pub fn get_available_tools() -> Vec<Tool> {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuiltinTool {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub schema: serde_json::Value,
+    pub enabled_by_default: bool,
+}
+
+pub fn get_builtin_tool_defs() -> Vec<BuiltinTool> {
     vec![
-        Tool::new("get_weather")
-            .with_description("Get live current weather for a city using wttr.in")
-            .with_schema(json!({
+        BuiltinTool {
+            name: "get_weather",
+            description: "Get live current weather for a city using wttr.in",
+            schema: json!({
                 "type": "object",
                 "properties": {
                     "city": { "type": "string", "description": "The city name, e.g. London, Tokyo" }
                 },
                 "required": ["city"]
-            })),
-        Tool::new("read_file")
-            .with_description("Read the text content of a file from the local filesystem")
-            .with_schema(json!({
+            }),
+            enabled_by_default: true,
+        },
+        BuiltinTool {
+            name: "read_file",
+            description: "Read the text content of a file from the local filesystem",
+            schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Relative or absolute file path" }
                 },
                 "required": ["path"]
-            })),
-        Tool::new("write_file")
-            .with_description("Write content to a file on the local filesystem (creates or overwrites)")
-            .with_schema(json!({
+            }),
+            enabled_by_default: true,
+        },
+        BuiltinTool {
+            name: "write_file",
+            description: "Write content to a file on the local filesystem (creates or overwrites)",
+            schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Target file path" },
                     "content": { "type": "string", "description": "Text content to write" }
                 },
                 "required": ["path", "content"]
-            })),
-        Tool::new("list_directory")
-            .with_description("List files and subdirectories inside a directory path")
-            .with_schema(json!({
+            }),
+            enabled_by_default: true,
+        },
+        BuiltinTool {
+            name: "list_directory",
+            description: "List files and subdirectories inside a directory path",
+            schema: json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Directory path (defaults to current directory '.')" }
                 }
-            })),
-        Tool::new("web_fetch")
-            .with_description("Fetch raw text/HTML response from a web URL")
-            .with_schema(json!({
+            }),
+            enabled_by_default: true,
+        },
+        BuiltinTool {
+            name: "web_fetch",
+            description: "Fetch raw text/HTML response from a web URL",
+            schema: json!({
                 "type": "object",
                 "properties": {
                     "url": { "type": "string", "description": "Full URL including protocol, e.g. https://example.com" }
                 },
                 "required": ["url"]
-            })),
+            }),
+            enabled_by_default: true,
+        },
     ]
+}
+
+pub fn get_enabled_builtin_tools(preferences: &HashMap<String, bool>) -> Vec<Tool> {
+    get_builtin_tool_defs()
+        .into_iter()
+        .filter(|def| {
+            preferences
+                .get(def.name)
+                .copied()
+                .unwrap_or(def.enabled_by_default)
+        })
+        .map(|def| {
+            Tool::new(def.name)
+                .with_description(def.description)
+                .with_schema(def.schema)
+        })
+        .collect()
 }
 
 /// Executes a tool call asynchronously and returns the result as a string.
@@ -104,7 +145,10 @@ pub async fn execute_tool(call: &ToolCall) -> Result<String, String> {
                 .await
                 .map_err(|e| format!("Failed to write to '{path}': {e}"))?;
 
-            Ok(format!("Successfully wrote {} bytes to '{path}'", content.len()))
+            Ok(format!(
+                "Successfully wrote {} bytes to '{path}'",
+                content.len()
+            ))
         }
 
         "list_directory" => {
@@ -121,7 +165,7 @@ pub async fn execute_tool(call: &ToolCall) -> Result<String, String> {
             let mut items = Vec::new();
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let is_dir = entry.file_type().await.map_or(false, |ft| ft.is_dir());
+                let is_dir = entry.file_type().await.is_ok_and(|ft| ft.is_dir());
 
                 if is_dir {
                     items.push(format!("📁 {name}/"));
@@ -136,7 +180,6 @@ pub async fn execute_tool(call: &ToolCall) -> Result<String, String> {
                 Ok(items.join("\n"))
             }
         }
-
 
         "web_fetch" => {
             let url = call
@@ -156,7 +199,10 @@ pub async fn execute_tool(call: &ToolCall) -> Result<String, String> {
 
             // Limit response size to 8KB.
             if text.len() > 8000 {
-                Ok(format!("{}...\n\n[Content truncated at 8000 characters]", &text[..8000]))
+                Ok(format!(
+                    "{}...\n\n[Content truncated at 8000 characters]",
+                    &text[..8000]
+                ))
             } else {
                 Ok(text)
             }

@@ -3,20 +3,24 @@ use genai::Client;
 use genai::chat::{
     ChatMessage, ChatOptions, ChatRequest, ChatRole, ChatStreamEvent, ToolCall, ToolResponse,
 };
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 use crate::chat::ExecMode;
-use crate::chat::tools::execute_tool;
-use crate::types::{CompletionEvent, Conversation, GenerationPhase, GenerationState, Message, Selected};
+use crate::chat::mcp_client::McpManager;
+use crate::chat::tools::{execute_tool, get_enabled_builtin_tools};
+use crate::types::{
+    CompletionEvent, Conversation, GenerationPhase, GenerationState, Message, Selected,
+};
 
-pub const DEFAULT_SYSTEM_PROMPT: &str =
-    "You are an Smart AI Assistant Currently interacting with the user
-in a native app called Cast Client. 
-- Cast gives you tools to use if you think you need them you use them.
-- Cast has Markdown Rendering Capabilities So you keep your responses well formatted.
-- Cast is lightweight and Token Efficincy is key, you do not repeat what you say.
-";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a smart AI assistant interacting with the user \
+in a native app called Cast Client. \
+You have tools available; use them when they help answer the request. \
+Cast renders Markdown, so keep responses well formatted. \
+Be concise and do not repeat yourself.";
 const MAX_CONVERSATIONS: usize = 50;
 const MAX_MESSAGES: usize = 100;
 
@@ -24,11 +28,15 @@ fn create_request(
     mode: ExecMode,
     messages: Vec<ChatMessage>,
     system: Option<String>,
+    tool_preferences: &HashMap<String, bool>,
+    mcp_tools: Vec<genai::chat::Tool>,
 ) -> ChatRequest {
-    let tools = match mode {
+    let mut tools = match mode {
         ExecMode::Chat => vec![],
-        ExecMode::Agent => crate::chat::tools::get_available_tools(),
+        ExecMode::Agent => get_enabled_builtin_tools(tool_preferences),
     };
+
+    tools.extend(mcp_tools);
 
     let system_p = system.as_deref().unwrap_or(DEFAULT_SYSTEM_PROMPT);
 
@@ -37,7 +45,6 @@ fn create_request(
         .with_system(system_p)
 }
 
-/// Everything `send_message` needs grouped to keep the call site small.
 pub struct SendContext<'a> {
     pub convos: &'a mut Vec<Conversation>,
     pub active: &'a mut Selected,
@@ -46,12 +53,17 @@ pub struct SendContext<'a> {
     pub tx: &'a Sender<CompletionEvent>,
     pub mode: ExecMode,
     pub system: Option<String>,
+    pub tool_preferences: &'a HashMap<String, bool>,
+    pub mcp_manager: &'a Arc<McpManager>,
 }
 
 /// Pushes the user message onto the active
 /// conversation, kicks off an agentic streaming loop on the tokio runtime, and
 /// returns the cancellation token + conversation index.
-pub fn send_message(text: Option<String>, ctx: SendContext) -> Option<(usize, CancellationToken)> {
+pub fn send_message(
+    text: Option<String>,
+    ctx: SendContext<'_>,
+) -> Option<(usize, CancellationToken)> {
     let val = text?;
     if val.trim().is_empty() {
         return None;
@@ -65,6 +77,8 @@ pub fn send_message(text: Option<String>, ctx: SendContext) -> Option<(usize, Ca
         tx,
         mode,
         system,
+        tool_preferences,
+        mcp_manager,
     } = ctx;
 
     let idx = match *active {
@@ -84,7 +98,7 @@ pub fn send_message(text: Option<String>, ctx: SendContext) -> Option<(usize, Ca
     };
 
     let user_msg = ChatMessage::user(val.clone());
-    convos[idx].messages.push(Message{message: user_msg, tools_called: 0});
+    convos[idx].messages.push(Message::new(user_msg));
 
     if convos[idx].title == "New Chat" {
         let title = val.chars().take(50).collect::<String>();
@@ -103,20 +117,28 @@ pub fn send_message(text: Option<String>, ctx: SendContext) -> Option<(usize, Ca
         .iter()
         .map(|m| m.message.clone())
         .collect();
-    if let Some(last) = request_messages.last() {
-        if matches!(last.role, ChatRole::Assistant) && last.content.is_empty() {
-            request_messages.pop();
-        }
+    if let Some(last) = request_messages.last()
+        && matches!(last.role, ChatRole::Assistant)
+        && last.content.is_empty()
+    {
+        request_messages.pop();
     }
 
-    let request = create_request(mode, request_messages, system);
+    // Fetch MCP tools (async but we block here)
+    let mcp_tools = {
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(mcp_manager.get_genai_tools())
+    };
+
+    let request = create_request(mode, request_messages, system, tool_preferences, mcp_tools);
 
     let client = client.clone();
     let tx = tx.clone();
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
+    let mcp_manager = mcp_manager.clone();
     tokio::spawn(async move {
-        run_agent_loop(client, model, request, tx, cancel_for_task).await;
+        run_agent_loop(client, model, request, tx, cancel_for_task, mcp_manager).await;
     });
 
     crate::storage::save_conversations(convos);
@@ -131,16 +153,17 @@ async fn run_agent_loop(
     mut request: ChatRequest,
     tx: Sender<CompletionEvent>,
     cancel: CancellationToken,
+    mcp_manager: Arc<McpManager>,
 ) {
     const MAX_TOOL_TURNS: usize = 8;
     for turn in 0..MAX_TOOL_TURNS {
         if cancel.is_cancelled() {
-            println!("[AGENT] Cancellation requested before API call");
+            info!("[AGENT] Cancellation requested before API call");
 
             let _ = tx.send(CompletionEvent::Cancelled);
             return;
         }
-    
+
         let options = ChatOptions {
             capture_tool_calls: Some(true),
             ..Default::default()
@@ -149,12 +172,10 @@ async fn run_agent_loop(
             .exec_chat_stream(&model, request.clone(), Some(&options))
             .await
         {
-            Ok(stream) => {
-               
-                stream.stream
-            }
+            Ok(stream) => stream.stream,
 
             Err(err) => {
+                error!("[AGENT] Failed to start stream: {err}");
                 let _ = tx.send(CompletionEvent::Error(err.to_string()));
 
                 return;
@@ -177,18 +198,13 @@ async fn run_agent_loop(
 
                     match event {
                         Ok(ChatStreamEvent::Chunk(chunk)) => {
-    
                             if !chunk.content.is_empty() {
-                                let _ = tx.send(
-                                    CompletionEvent::Chunk(chunk.content)
-                                );
+                                let _ =
+                                    tx.send(CompletionEvent::Chunk(chunk.content));
                             }
                         }
 
-                        Ok(ChatStreamEvent::ToolCallChunk(tool_chunk)) => {
-                            
-
-                        }
+                        Ok(ChatStreamEvent::ToolCallChunk(_tool_chunk)) => {}
 
                         Ok(ChatStreamEvent::End(end)) => {
                             end_event = Some(end);
@@ -196,7 +212,7 @@ async fn run_agent_loop(
                         }
 
                         Err(err) => {
-
+                            error!("[AGENT] Stream error: {err}");
                             let _ = tx.send(
                                 CompletionEvent::Error(err.to_string())
                             );
@@ -205,20 +221,15 @@ async fn run_agent_loop(
                         }
 
                         other => {
-                            println!(
-                                "[DBG] Other event: {:?}",
-                                other
-                            );
+                            debug!("[AGENT] Unhandled stream event: {other:?}");
                         }
                     }
                 }
             }
         }
 
-
         let Some(end) = end_event else {
-            println!("[AGENT] !!! NO END EVENT - STOPPING AGENT !!!");
-
+            error!("[AGENT] Stream ended without a terminal event");
             let _ = tx.send(CompletionEvent::Error(
                 "Stream ended without a terminal event.".into(),
             ));
@@ -246,7 +257,10 @@ async fn run_agent_loop(
         }
 
         if tool_calls.len() > 8 {
-            println!("[ERR] !!! TOO MANY TOOL CALLS: {} !!!", tool_calls.len());
+            warn!(
+                "[AGENT] Too many tool calls in one turn: {}",
+                tool_calls.len()
+            );
 
             let _ = tx.send(CompletionEvent::Error(format!(
                 "Agent requested {} tools in one turn.",
@@ -258,9 +272,9 @@ async fn run_agent_loop(
 
         let mut tool_responses = Vec::with_capacity(tool_calls.len());
 
-        for (_i, call) in tool_calls.iter().enumerate() {
+        for call in tool_calls.iter() {
             if cancel.is_cancelled() {
-                println!("[AGENT] Cancelled before tool execution");
+                info!("[AGENT] Cancelled before tool execution");
 
                 let _ = tx.send(CompletionEvent::Cancelled);
 
@@ -271,35 +285,46 @@ async fn run_agent_loop(
                 tool_name: call.fn_name.clone(),
             });
 
-            let output = match execute_tool(call).await {
-                Ok(result) => {
-                    println!("[TOOL] SUCCESS: {}", call.fn_name);
-
-                    result
+            let output = if call.fn_name.starts_with("mcp__") {
+                match mcp_manager
+                    .execute_tool(&call.fn_name, call.fn_arguments.clone())
+                    .await
+                {
+                    Ok(result) => {
+                        debug!("[MCP TOOL] Success: {}", call.fn_name);
+                        serde_json::to_string(&result)
+                            .unwrap_or_else(|_| "MCP tool executed".to_string())
+                    }
+                    Err(err) => {
+                        error!("[MCP TOOL] Failure ({}): {err}", call.fn_name);
+                        format!("MCP tool execution error: {}", err)
+                    }
                 }
-
-                Err(err) => {
-                    println!("[TOOL] FAILURE: {}", err);
-
-                    format!("Tool execution error: {}", err)
+            } else {
+                match execute_tool(call).await {
+                    Ok(result) => {
+                        debug!("[TOOL] Success: {}", call.fn_name);
+                        result
+                    }
+                    Err(err) => {
+                        error!("[TOOL] Failure ({}): {err}", call.fn_name);
+                        format!("Tool execution error: {}", err)
+                    }
                 }
             };
-
 
             tool_responses.push(ToolResponse::from_tool_call(call, output));
         }
 
         let _ = tx.send(CompletionEvent::ToolTurnCompleted {
             tool_calls: tool_calls.clone(),
-            tool_responses: tool_responses.clone(),
         });
         request.messages.push(assistant_tool_message);
-
 
         request.messages.push(tool_responses.into());
 
         if turn + 1 >= MAX_TOOL_TURNS {
-            println!("\n[AGENT] !!! MAX TOOL TURNS REACHED !!!");
+            warn!("[AGENT] Max tool turns ({MAX_TOOL_TURNS}) reached");
 
             let _ = tx.send(CompletionEvent::Error(
                 "Agent stopped after reaching the maximum number of tool turns.".into(),
@@ -320,7 +345,10 @@ pub fn poll_events(
         let convo_idx = match generation {
             GenerationState::Active { convo_idx, .. } => *convo_idx,
             GenerationState::Idle => {
-                eprintln!("[POLL] Ignoring event while generation is idle: {:?}", event);
+                warn!(
+                    "[POLL] Ignoring event while generation is idle: {:?}",
+                    event
+                );
                 continue;
             }
         };
@@ -328,32 +356,31 @@ pub fn poll_events(
         match event {
             CompletionEvent::Chunk(text) => {
                 use genai::chat::ContentPart;
-                if let Some(last) = convos[convo_idx].messages.last_mut() {
-                    if matches!(last.message.role, ChatRole::Assistant) {
-                        last.message.content.push(ContentPart::Text(text));
-                    } else {
-                        convos[convo_idx]
-                            .messages
-                            .push(Message{message: ChatMessage::assistant(text), tools_called: 0});
-                    }
+                if let Some(last) = convos[convo_idx].messages.last_mut()
+                    && matches!(last.message.role, ChatRole::Assistant)
+                {
+                    last.message.content.push(ContentPart::Text(text));
                 } else {
                     convos[convo_idx]
                         .messages
-                        .push(Message{message: ChatMessage::assistant(text), tools_called: 0});
+                        .push(Message::new(ChatMessage::assistant(text)));
                 }
 
                 *generation = GenerationState::Active {
                     convo_idx,
-                    phase: GenerationPhase::Thinking
+                    phase: GenerationPhase::Thinking,
                 };
             }
 
             CompletionEvent::ToolCallStarted { tool_name } => {
-                if !convos[convo_idx].messages.last().is_some_and(|msg| matches!(msg.message.role, ChatRole::Assistant)) {
-                    convos[convo_idx].messages.push(Message {
-                        message: ChatMessage::assistant(String::new()),
-                        tools_called: 0,
-                    });
+                if !convos[convo_idx]
+                    .messages
+                    .last()
+                    .is_some_and(|msg| matches!(msg.message.role, ChatRole::Assistant))
+                {
+                    convos[convo_idx]
+                        .messages
+                        .push(Message::new(ChatMessage::assistant(String::new())));
                 }
 
                 *generation = GenerationState::Active {
@@ -362,20 +389,16 @@ pub fn poll_events(
                 };
             }
 
-            CompletionEvent::ToolTurnCompleted { tool_calls, .. } => {
-                if let Some(last) = convos[convo_idx].messages.last_mut() {
-                    if matches!(last.message.role, ChatRole::Assistant) {
-                        last.tools_called = tool_calls.len();
-                    } else {
-                        convos[convo_idx].messages.push(Message {
-                            message: ChatMessage::assistant(String::new()),
-                            tools_called: tool_calls.len(),
-                        });
-                    }
+            CompletionEvent::ToolTurnCompleted { tool_calls } => {
+                if let Some(last) = convos[convo_idx].messages.last_mut()
+                    && matches!(last.message.role, ChatRole::Assistant)
+                {
+                    last.tools_called = tool_calls.len();
                 } else {
                     convos[convo_idx].messages.push(Message {
                         message: ChatMessage::assistant(String::new()),
                         tools_called: tool_calls.len(),
+                        is_error: false,
                     });
                 }
 
@@ -400,13 +423,14 @@ pub fn poll_events(
             }
 
             CompletionEvent::Error(e) => {
-                eprintln!(
-                    "[POLL] Generation error for convo {convo_idx}: {e}"
-                );
+                error!("[POLL] Generation error for convo {convo_idx}: {e}");
 
                 convos[convo_idx]
                     .messages
-                    .push(Message{message: ChatMessage::assistant(format!("Error {}", e)), tools_called: 0});
+                    .push(Message::error(ChatMessage::assistant(format!(
+                        "Error {}",
+                        e
+                    ))));
 
                 *generation = GenerationState::Idle;
                 *active_cancel = None;

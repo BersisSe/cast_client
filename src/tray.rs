@@ -1,10 +1,10 @@
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
 
-use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
 pub struct TrayHandles {
     pub hidden: Arc<AtomicBool>,
@@ -25,7 +25,12 @@ pub fn setup_tray(ctx: &egui::Context) -> TrayHandles {
         let tray_ctx = ctx.clone();
         let hidden = hidden.clone();
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 let is_hidden = hidden.load(Ordering::SeqCst);
                 hidden.store(!is_hidden, Ordering::SeqCst);
                 tray_ctx.send_viewport_cmd(egui::ViewportCommand::Visible(is_hidden));
@@ -45,9 +50,12 @@ pub fn setup_tray(ctx: &egui::Context) -> TrayHandles {
     }
 
     let icon_bytes = include_bytes!("./icon/AppIcon64.png");
-    let image = image::load_from_memory(icon_bytes).expect("Failed to load tray icon").to_rgba8();
+    let image = image::load_from_memory(icon_bytes)
+        .expect("Failed to load tray icon")
+        .to_rgba8();
     let (icon_w, icon_h) = image.dimensions();
-    let tray_icon = tray_icon::Icon::from_rgba(image.into_raw(), icon_w, icon_h).expect("Failed to create tray icon");
+    let tray_icon = tray_icon::Icon::from_rgba(image.into_raw(), icon_w, icon_h)
+        .expect("Failed to create tray icon");
 
     let icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
@@ -57,5 +65,9 @@ pub fn setup_tray(ctx: &egui::Context) -> TrayHandles {
         .build()
         .expect("failed to build tray icon");
 
-    TrayHandles { hidden, quit_requested, icon }
+    TrayHandles {
+        hidden,
+        quit_requested,
+        icon,
+    }
 }

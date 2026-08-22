@@ -18,6 +18,11 @@ mimalloc = { version = "0.1.50", features = ["override"], default-features = fal
 dirs = "6.0"
 tray-icon = {version = "0.24"}
 genai = "0.6.2"
+rmcp = { version = "3.1", features = ["client", "local", "transport-child-process"] }
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+uuid = { version = "1.0", features = ["serde", "v4"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [build-dependencies]
 winresource = "0.1"
