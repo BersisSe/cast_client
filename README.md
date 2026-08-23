@@ -31,12 +31,13 @@
 cargo build --release
 ```
 *Note*: mimalloc might require additional packages on Linux. Cast is not tested for Linux you can report any issues you encourter in the issues!
+*Second Note*: Build might take a few minutes(about 5 or 6 depending on the machine) and seem to be stuck but its not.
 ## Configuration
 
 On first launch, open Settings and set:
-- **API Adapter** -- e.g. `OpenAI`
-- **API Key** -- Your API key from the providerf
-- **Model** -- e.g. `gpt5.6-luna`
+- **API Adapter** - e.g. `OpenAI`
+- **API Key** - Your API key from the provider
+- **Model** - e.g. `gpt5.6-luna`
 
 
 ## Why does this exist?
@@ -48,4 +49,4 @@ So its here you can send PR's and Issue's for features you want and I'll merge/h
 
 ## License
 
-GPL-3.0.
+This project is licenced under GPL-3.0 for more info check [LICENSE](LICENSE)
