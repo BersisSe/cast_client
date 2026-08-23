@@ -7,10 +7,9 @@
 ## Features
 
 - Streaming responses (SSE) with live markdown rendering
-- Tool Calling(Custom Tools + MCP servers are in the works)
+- Tool Calling + MCP Servers
 - Multiple conversations, persisted to disk
 - Works with Most of the providers via `genai` crate's Adapters.
-- Single background thread for networking, not a full async worker pool
 - GPU-accelerated UI via `egui`/`eframe` using OpenGL, no browser engine involved
 
 ## Seeing the App in action

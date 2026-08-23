@@ -14,18 +14,6 @@ pub struct BuiltinTool {
 pub fn get_builtin_tool_defs() -> Vec<BuiltinTool> {
     vec![
         BuiltinTool {
-            name: "get_weather",
-            description: "Get live current weather for a city using wttr.in",
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "city": { "type": "string", "description": "The city name, e.g. London, Tokyo" }
-                },
-                "required": ["city"]
-            }),
-            enabled_by_default: true,
-        },
-        BuiltinTool {
             name: "read_file",
             description: "Read the text content of a file from the local filesystem",
             schema: json!({
@@ -96,26 +84,6 @@ pub fn get_enabled_builtin_tools(preferences: &HashMap<String, bool>) -> Vec<Too
 /// Executes a tool call asynchronously and returns the result as a string.
 pub async fn execute_tool(call: &ToolCall) -> Result<String, String> {
     match call.fn_name.as_str() {
-        "get_weather" => {
-            let city = call
-                .fn_arguments
-                .get("city")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| "Missing required 'city' argument".to_string())?;
-
-            let url = format!("https://wttr.in/{}?format=3", city);
-            let res = reqwest::get(&url)
-                .await
-                .map_err(|e| format!("Weather fetch error: {e}"))?;
-
-            let text = res
-                .text()
-                .await
-                .map_err(|e| format!("Failed to read response: {e}"))?;
-
-            Ok(text.trim().to_string())
-        }
-
         "read_file" => {
             let path = call
                 .fn_arguments
