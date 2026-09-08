@@ -55,7 +55,8 @@ jobs:
             libwayland-dev \
             libxcb-render0-dev \
             libxcb-shape0-dev \
-            libxcb-xfixes0-dev
+            libxcb-xfixes0-dev \
+            libxdo-dev
 
       - name: Build (release)
         run: cargo build --release --target ${{ matrix.target }}
