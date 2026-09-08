@@ -12,6 +12,7 @@ use crate::components::{
     edit_line, message_bubble, sidebar_row, thinking_bubble, tool_status_bubble,
 };
 use crate::theme::custom_styling;
+use tracing::info;
 use crate::tray::TrayHandles;
 use crate::types::{CompletionEvent, Conversation, GenerationState, Selected};
 use genai::Client;
@@ -61,6 +62,8 @@ pub struct CastClient {
     mcp_manager: Arc<McpManager>,
     show_add_mcp_modal: bool,
     add_mcp_form: AddMcpForm,
+    built_adapter: AdapterKind,
+    built_api_key: String,
 }
 
 #[derive(Default)]
@@ -108,17 +111,10 @@ impl CastClient {
         );
         default_headers.insert("X-Title", HeaderValue::from_static("Cast Client"));
 
-        let reqwest_client = reqwest::Client::builder()
-            .default_headers(default_headers)
-            .build()
-            .expect("Failed to build reqwest client");
         let (tx, rx) = channel();
-        let apikey = initial_settings.api_key.clone();
-        let client = Client::builder()
-            .with_reqwest(reqwest_client)
-            .with_adapter_kind(initial_settings.adapter)
-            .with_auth_resolver_fn(|_service_id| Ok(Some(AuthData::Key(apikey))))
-            .build();
+        let client = Self::build_client(&initial_settings);
+        let built_adapter = initial_settings.adapter;
+        let built_api_key = initial_settings.api_key.clone();
 
         let mcp_manager = Arc::new(McpManager::new());
         let mcp_manager_clone = mcp_manager.clone();
@@ -148,6 +144,43 @@ impl CastClient {
             mcp_manager,
             show_add_mcp_modal: false,
             add_mcp_form: AddMcpForm::default(),
+            built_adapter,
+            built_api_key,
+        }
+    }
+
+    fn build_client(settings: &AppSettings) -> Client {
+        let mut default_headers = HeaderMap::new();
+        default_headers.insert(
+            "X-OpenRouter-Title",
+            HeaderValue::from_static("Cast Client"),
+        );
+        default_headers.insert("X-Title", HeaderValue::from_static("Cast Client"));
+
+        let reqwest_client = reqwest::Client::builder()
+            .default_headers(default_headers)
+            .build()
+            .expect("Failed to build reqwest client");
+
+        let api_key = settings.api_key.clone();
+        Client::builder()
+            .with_reqwest(reqwest_client)
+            .with_adapter_kind(settings.adapter)
+            .with_auth_resolver_fn(move |_service_id| {
+                Ok(Some(AuthData::Key(api_key.clone())))
+            })
+            .build()
+    }
+
+    /// Rebuilds the genai client if the adapter or API key changed in Settings.
+    fn sync_client_with_settings(&mut self) {
+        if self.built_adapter != self.settings.adapter
+            || self.built_api_key != self.settings.api_key
+        {
+            info!("[SETTINGS] Adapter or API key changed, rebuilding client");
+            self.client = Self::build_client(&self.settings);
+            self.built_adapter = self.settings.adapter;
+            self.built_api_key = self.settings.api_key.clone();
         }
     }
 
@@ -712,6 +745,8 @@ impl CastClient {
 
 impl eframe::App for CastClient {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.sync_client_with_settings();
+
         if ui.ctx().input(|i| i.viewport().close_requested()) {
             if self.quit_requested.load(Ordering::SeqCst) {
                 return;

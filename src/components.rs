@@ -1,4 +1,4 @@
-use eframe::egui::{self, Stroke, StrokeKind};
+use eframe::egui::{self, Stroke, StrokeKind, epaint::text::{LayoutJob, TextFormat, TextWrapping}};
 use egui_commonmark::CommonMarkCache;
 use genai::chat::{ChatMessage, ChatRole};
 
@@ -68,6 +68,11 @@ fn render_label(
     if matches!(msg.role, ChatRole::Assistant) {
         egui_commonmark::CommonMarkViewer::new().show(ui, cache, &text);
 
+        ui.add_space(2.0);
+        if ui.button("📋 Copy").clicked() {
+            ui.ctx().copy_text(text.clone());
+        }
+
         if tools_used > 0 {
             let label = format!(
                 "🔧 {} tool{} called",
@@ -85,7 +90,7 @@ fn render_label(
         return;
     }
 
-    ui.label(egui::RichText::new(text).color(theme::TEXT_PRIMARY));
+    ui.add(egui::Label::new(egui::RichText::new(text).color(theme::TEXT_PRIMARY)).wrap());
 }
 
 pub fn edit_line(
@@ -204,13 +209,14 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool)
     }
 
     let text_pos = rect.min + egui::vec2(14.0, rect.height() / 2.0);
-    ui.painter().text(
-        text_pos,
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::proportional(15.0),
-        text_color,
+    let max_text_width = rect.width() - 38.0;
+    let mut job = LayoutJob::single_section(
+        title.to_string(),
+        TextFormat::simple(egui::FontId::proportional(15.0), text_color),
     );
+    job.wrap = TextWrapping::truncate_at_width(max_text_width);
+    let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+    ui.painter().galley(text_pos, galley, theme::TEXT_PRIMARY);
 
     let btn_id = response.id.with("del");
     let mut deleted = false;
