@@ -12,7 +12,7 @@ pub struct TrayHandles {
     pub icon: tray_icon::TrayIcon,
 }
 
-pub fn setup_tray(ctx: &egui::Context) -> TrayHandles {
+pub fn setup_tray(ctx: &egui::Context) -> Option<TrayHandles> {
     let hidden = Arc::new(AtomicBool::new(false));
     let quit_requested = Arc::new(AtomicBool::new(false));
 
@@ -49,6 +49,11 @@ pub fn setup_tray(ctx: &egui::Context) -> TrayHandles {
         }));
     }
 
+    if std::env::var("CAST_NO_TRAY").is_ok() {
+        tracing::info!("CAST_NO_TRAY set, skipping tray icon");
+        return None;
+    }
+
     let icon_bytes = include_bytes!("./icon/AppIcon64.png");
     let image = image::load_from_memory(icon_bytes)
         .expect("Failed to load tray icon")
@@ -57,17 +62,23 @@ pub fn setup_tray(ctx: &egui::Context) -> TrayHandles {
     let tray_icon = tray_icon::Icon::from_rgba(image.into_raw(), icon_w, icon_h)
         .expect("Failed to create tray icon");
 
-    let icon = TrayIconBuilder::new()
+    let icon = match TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .with_icon(tray_icon)
         .with_tooltip("Cast Client")
         .build()
-        .expect("failed to build tray icon");
+    {
+        Ok(icon) => icon,
+        Err(e) => {
+            tracing::warn!("Tray icon unavailable ({e}), running without system tray");
+            return None;
+        }
+    };
 
-    TrayHandles {
+    Some(TrayHandles {
         hidden,
         quit_requested,
         icon,
-    }
+    })
 }

@@ -13,7 +13,6 @@ use crate::components::{
 };
 use crate::theme::custom_styling;
 use tracing::info;
-use crate::tray::TrayHandles;
 use crate::types::{CompletionEvent, Conversation, GenerationState, Selected};
 use genai::Client;
 
@@ -54,7 +53,7 @@ pub struct CastClient {
 
     tray_hidden: Arc<AtomicBool>,
     quit_requested: Arc<AtomicBool>,
-    _tray: tray_icon::TrayIcon,
+    _tray: Option<tray_icon::TrayIcon>,
 
     exec_mode: ExecMode,
     generation: GenerationState,
@@ -79,11 +78,9 @@ struct AddMcpForm {
 impl CastClient {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let ctx = cc.egui_ctx.clone();
-        let TrayHandles {
-            hidden: tray_hidden,
-            quit_requested,
-            icon: tray_icon,
-        } = crate::tray::setup_tray(&ctx);
+        let tray_handles = crate::tray::setup_tray(&ctx);
+        let tray_hidden = tray_handles.as_ref().map(|h| h.hidden.clone()).unwrap_or_default();
+        let quit_requested = tray_handles.as_ref().map(|h| h.quit_requested.clone()).unwrap_or_default();
         cc.egui_ctx.options_mut(|options| {
             options.reduce_texture_memory = true;
             options.warn_on_id_clash = false;
@@ -138,7 +135,7 @@ impl CastClient {
             md_cache: egui_commonmark::CommonMarkCache::default(),
             tray_hidden,
             quit_requested,
-            _tray: tray_icon,
+            _tray: tray_handles.map(|h| h.icon),
             generation: GenerationState::default(),
             exec_mode: ExecMode::default(),
             mcp_manager,
@@ -751,11 +748,13 @@ impl eframe::App for CastClient {
             if self.quit_requested.load(Ordering::SeqCst) {
                 return;
             }
-            self.tray_hidden.store(true, Ordering::SeqCst);
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            if self._tray.is_some() {
+                self.tray_hidden.store(true, Ordering::SeqCst);
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
         }
 
         if let Selected::Index(idx) = self.active
