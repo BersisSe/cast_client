@@ -1,11 +1,15 @@
-use eframe::egui::{self, Stroke, StrokeKind};
+use eframe::egui::{self, Stroke, StrokeKind, epaint::text::{LayoutJob, TextFormat, TextWrapping}};
 use egui_commonmark::CommonMarkCache;
+use genai::chat::{ChatMessage, ChatRole};
+
+use crate::chat::ExecMode;
+use crate::types::Message;
 
 use super::theme;
-use crate::types::{Message, MessageSender};
 
 pub fn message_bubble(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCache) {
-    let align = if msg.sender == MessageSender::User {
+    let is_user = matches!(msg.message.role, ChatRole::User);
+    let align = if is_user {
         egui::Layout::right_to_left(egui::Align::Min)
     } else {
         egui::Layout::left_to_right(egui::Align::Min)
@@ -15,40 +19,94 @@ pub fn message_bubble(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCa
         let max_width = (ui.available_width() * 0.78).min(700.0);
         ui.set_max_width(max_width);
 
-        let fill = if msg.sender == MessageSender::User {
+        let fill = if msg.is_error {
+            theme::BG_BUBBLE_ERR
+        } else if is_user {
             theme::BG_BUBBLE_USER
         } else {
             theme::BG_BUBBLE_AI
+        };
+
+        let stroke = if msg.is_error {
+            egui::Stroke::new(theme::HAIRLINE_WIDTH, theme::TEXT_PRIMARY)
+        } else {
+            Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE)
         };
 
         egui::Frame::new()
             .fill(fill)
             .inner_margin(10)
             .corner_radius(theme::CORNER_RADIUS)
-            .stroke(Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE))
+            .stroke(stroke)
             .show(ui, |ui| {
-                render_label(ui, msg, cache);
+                render_label(ui, &msg.message, msg.tools_called, cache);
             });
     });
 }
-
-fn render_label(ui: &mut egui::Ui, msg: &Message, cache: &mut CommonMarkCache) {
-    if msg.ai_start {
-        ui.label(egui::RichText::new("Thinking..").color(theme::TEXT_SECONDARY));
-        ui.spinner();
-    } else if msg.streaming {
-        // Plain text while tokens are still arriving — cheap, smooth, no markdown reparse
-        ui.label(egui::RichText::new(&msg.content).color(theme::TEXT_PRIMARY));
-    } else {
-        // Final content — parse markdown once
-        egui_commonmark::CommonMarkViewer::new().show(ui, cache, &msg.content);
+fn render_label(
+    ui: &mut egui::Ui,
+    msg: &ChatMessage,
+    tools_used: usize,
+    cache: &mut CommonMarkCache,
+) {
+    if matches!(msg.role, ChatRole::Tool) {
+        return;
     }
+
+    if matches!(msg.role, ChatRole::Assistant) && !msg.content.tool_calls().is_empty() {
+        return;
+    }
+
+    let text = msg.content.texts().join("");
+
+    if text.is_empty() && matches!(msg.role, ChatRole::Assistant) {
+        ui.label(egui::RichText::new("Thinking...").color(theme::TEXT_SECONDARY));
+        ui.spinner();
+        return;
+    }
+
+    if matches!(msg.role, ChatRole::Assistant) {
+        egui_commonmark::CommonMarkViewer::new().show(ui, cache, &text);
+
+        ui.add_space(2.0);
+        if ui.button("📋 Copy").clicked() {
+            ui.ctx().copy_text(text.clone());
+        }
+
+        if tools_used > 0 {
+            let label = format!(
+                "🔧 {} tool{} called",
+                tools_used,
+                if tools_used == 1 { "" } else { "s" }
+            );
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(label)
+                    .small()
+                    .color(theme::TEXT_SECONDARY),
+            );
+        }
+
+        return;
+    }
+
+    ui.add(egui::Label::new(egui::RichText::new(text).color(theme::TEXT_PRIMARY)).wrap());
 }
 
-pub fn edit_line(ui: &mut egui::Ui, input: &mut String, sending_disabled: bool, on_cancel: Option<&mut dyn FnMut()>) -> Option<String> {
+pub fn edit_line(
+    ui: &mut egui::Ui,
+    input: &mut String,
+    sending_disabled: bool,
+    on_cancel: Option<&mut dyn FnMut()>,
+    exec_mode: &mut ExecMode,
+) -> Option<String> {
     let mut submitted: Option<String> = None;
 
-    if !sending_disabled && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter)) {
+    if !sending_disabled
+        && ui
+            .ctx()
+            .input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter))
+    {
         input.push('\n');
     }
 
@@ -58,42 +116,69 @@ pub fn edit_line(ui: &mut egui::Ui, input: &mut String, sending_disabled: bool, 
         .corner_radius(theme::CORNER_RADIUS)
         .stroke(Stroke::new(theme::HAIRLINE_WIDTH, theme::BORDER_HAIRLINE))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let button_width = 64.0;
-                let field_width = ui.available_width() - button_width - 8.0;
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(exec_mode, ExecMode::Chat, "💬 Chat");
+                    ui.selectable_value(exec_mode, ExecMode::Agent, "🤖 Agent");
 
-                let response = ui.add_enabled(
-                    !sending_disabled,
-                    egui::TextEdit::multiline(input)
-                        .hint_text(if sending_disabled {
-                            "Waiting for response..."
-                        } else {
-                            "Message..."
-                        })
-                        .desired_width(field_width.max(0.0))
-                        .desired_rows(2),
-                );
+                    ui.separator();
 
-                let enter_to_submit = !sending_disabled
-                    && response.has_focus()
-                    && ui.ctx().input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+                    if *exec_mode == ExecMode::Chat {
+                        ui.label(
+                            egui::RichText::new("Tools disabled")
+                                .small()
+                                .color(theme::TEXT_SECONDARY),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Tools active")
+                                .small()
+                                .color(theme::ACCENT),
+                        );
+                    }
+                });
 
-                if sending_disabled {
-                    if let Some(cancel_fn) = on_cancel {
-                        if ui.button("Cancel").clicked() {
+                ui.add_space(4.0);
+
+                ui.horizontal(|ui| {
+                    let button_width = 64.0;
+                    let field_width = ui.available_width() - button_width - 8.0;
+
+                    let response = ui.add_enabled(
+                        !sending_disabled,
+                        egui::TextEdit::multiline(input)
+                            .hint_text(if sending_disabled {
+                                "Waiting for response..."
+                            } else {
+                                "Message..."
+                            })
+                            .desired_width(field_width.max(0.0))
+                            .desired_rows(2),
+                    );
+
+                    let enter_to_submit = !sending_disabled
+                        && response.has_focus()
+                        && ui
+                            .ctx()
+                            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+
+                    if sending_disabled {
+                        if let Some(cancel_fn) = on_cancel
+                            && ui.button("Cancel").clicked()
+                        {
                             cancel_fn();
                         }
-                    }
-                } else {
-                    let send_clicked = ui
-                        .add_enabled(!sending_disabled, egui::Button::new("Send"))
-                        .clicked();
+                    } else {
+                        let send_clicked = ui
+                            .add_enabled(!sending_disabled, egui::Button::new("Send"))
+                            .clicked();
 
-                    if (enter_to_submit || send_clicked) && !input.trim().is_empty() {
-                        submitted = Some(std::mem::take(input));
-                        response.request_focus();
+                        if (enter_to_submit || send_clicked) && !input.trim().is_empty() {
+                            submitted = Some(std::mem::take(input));
+                            response.request_focus();
+                        }
                     }
-                }
+                });
             });
         });
 
@@ -104,9 +189,7 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool)
     let desired_size = egui::vec2(ui.available_width(), 34.0);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
 
-    let text_color = if active {
-        theme::TEXT_PRIMARY
-    } else if response.hovered() {
+    let text_color = if active || response.hovered() {
         theme::TEXT_PRIMARY
     } else {
         theme::TEXT_SECONDARY
@@ -126,13 +209,14 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool)
     }
 
     let text_pos = rect.min + egui::vec2(14.0, rect.height() / 2.0);
-    ui.painter().text(
-        text_pos,
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::proportional(15.0),
-        text_color,
+    let max_text_width = rect.width() - 38.0;
+    let mut job = LayoutJob::single_section(
+        title.to_string(),
+        TextFormat::simple(egui::FontId::proportional(15.0), text_color),
     );
+    job.wrap = TextWrapping::truncate_at_width(max_text_width);
+    let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+    ui.painter().galley(text_pos, galley, theme::TEXT_PRIMARY);
 
     let btn_id = response.id.with("del");
     let mut deleted = false;
@@ -166,4 +250,56 @@ pub fn sidebar_row(ui: &mut egui::Ui, title: &str, active: bool) -> (bool, bool)
     }
 
     (response.clicked() && !deleted, deleted)
+}
+pub fn thinking_bubble(ui: &mut egui::Ui) {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        let max_width = (ui.available_width() * 0.78).min(700.0);
+        ui.set_max_width(max_width);
+
+        egui::Frame::new()
+            .fill(crate::theme::BG_BUBBLE_AI)
+            .inner_margin(10)
+            .corner_radius(crate::theme::CORNER_RADIUS)
+            .stroke(egui::Stroke::new(
+                crate::theme::HAIRLINE_WIDTH,
+                crate::theme::BORDER_HAIRLINE,
+            ))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Thinking...").color(crate::theme::TEXT_SECONDARY),
+                    );
+                    ui.spinner();
+                });
+            });
+    });
+}
+
+pub fn tool_status_bubble(ui: &mut egui::Ui, tool_name: &str) {
+    ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
+        let max_width = (ui.available_width() * 0.78).min(700.0);
+        ui.set_max_width(max_width);
+
+        egui::Frame::new()
+            .fill(crate::theme::BG_BUBBLE_AI)
+            .inner_margin(10)
+            .corner_radius(crate::theme::CORNER_RADIUS)
+            .stroke(egui::Stroke::new(
+                crate::theme::HAIRLINE_WIDTH,
+                crate::theme::BORDER_HAIRLINE,
+            ))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("🔧");
+
+                    ui.label(
+                        egui::RichText::new(format!("Executing tool `{tool_name}`..."))
+                            .italics()
+                            .color(crate::theme::TEXT_SECONDARY),
+                    );
+
+                    ui.spinner();
+                });
+            });
+    });
 }

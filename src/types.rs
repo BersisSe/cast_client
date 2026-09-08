@@ -1,66 +1,71 @@
-use std::fmt::Display;
-
+use genai::chat::ChatMessage;
 use serde::{Deserialize, Serialize};
 
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum MessageSender {
-    User,
-    AI,
-
+#[derive(Debug)]
+pub enum CompletionEvent {
+    Chunk(String),
+    Finished,
+    ToolCallStarted {
+        tool_name: String,
+    },
+    ToolTurnCompleted {
+        tool_calls: Vec<genai::chat::ToolCall>,
+    },
+    Error(String),
+    Cancelled,
 }
-impl Display for MessageSender {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MessageSender::User => write!(f, "User"),
-            MessageSender::AI => write!(f, "AI"),
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conversation {
+    pub title: String,
+    pub messages: Vec<Message>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub message: ChatMessage,
+    pub tools_called: usize,
+    /// True if this message represents an error surfaced to the user
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+impl Message {
+    pub fn new(message: ChatMessage) -> Self {
+        Self {
+            message,
+            tools_called: 0,
+            is_error: false,
+        }
+    }
+
+    pub fn error(message: ChatMessage) -> Self {
+        Self {
+            message,
+            tools_called: 0,
+            is_error: true,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub sender: MessageSender,
-    pub content: String,
-    pub ai_start: bool,
-    pub streaming: bool,
-}
-
-impl Message {
-    pub fn new(sender: MessageSender, content: &str) -> Self {
-        Self {
-            sender,
-            content: content.to_string(),
-            streaming: false,
-            ai_start: false,
-        }
-    }
-    pub fn new_ai(content: &str) -> Self {
-        Self {
-            sender: MessageSender::AI,
-            content: content.to_string(),
-            streaming: false,
-            ai_start: false,
-        }
-    }
-    pub fn new_ai_begin() -> Self {
-        Self {
-            sender: MessageSender::AI,
-            content: String::with_capacity(128),
-            ai_start: true,
-            streaming: true,
-        }
-    }
-}
-
-#[derive(Debug,Clone, Serialize, Deserialize)]
-pub struct Conversation{
-    pub title: String,
-    pub messages: Vec<Message>,
-}
-
-#[derive(Debug,Clone, Serialize, Deserialize)]
-pub enum Selected{
+pub enum Selected {
     New,
-    Index(usize)
+    Index(usize),
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum GenerationState {
+    #[default]
+    Idle,
+
+    Active {
+        convo_idx: usize,
+        phase: GenerationPhase,
+    },
+}
+#[derive(Debug, Clone)]
+pub enum GenerationPhase {
+    Thinking,
+    ExecutingTool { tool_name: String },
 }
